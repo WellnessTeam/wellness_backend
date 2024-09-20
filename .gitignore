@@ -1,5 +1,8 @@
+<<<<<<< HEAD
 .env/
 
+=======
+>>>>>>> 99b343913145a6a129ea2f10364e259754b8bdff
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
