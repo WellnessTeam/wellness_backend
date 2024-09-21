@@ -18,4 +18,4 @@ COPY app /app
 COPY .env /app
 
 # Run the FastAPI app
-CMD ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
