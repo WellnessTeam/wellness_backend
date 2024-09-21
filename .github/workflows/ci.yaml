@@ -27,20 +27,20 @@ jobs:
                 poetry install
 
             # 환경 변수 설정 (GitHub Secrets에서 불러오기)
-            - name: Set environment variables
+            - name: Create .env file
               run: |
-                echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
-                echo "TEST_DATABASE_URL=${{ secrets.TEST_DATABASE_URL }}" >> $GITHUB_ENV
-                echo "BUCKET_NAME=${{ secrets.BUCKET_NAME }}" >> $GITHUB_ENV
-                echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> $GITHUB_ENV
-                echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
-                echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
-                echo "KAKAO_RESTAPI_KEY=${{ secrets.KAKAO_RESTAPI_KEY }}" >> $GITHUB_ENV
-                echo "KAKAO_REDIRECT_URL=${{ secrets.KAKAO_REDIRECT_URL }}" >> $GITHUB_ENV
-                echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
-                echo "ALGORITHM=${{ secrets.ALGORITHM }}" >> $GITHUB_ENV
-                echo "ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}" >> $GITHUB_ENV
-                echo "REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}" >> $GITHUB_ENV
+                echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > .env
+                echo "TEST_DATABASE_URL=${{ secrets.TEST_DATABASE_URL }}" >> .env
+                echo "BUCKET_NAME=${{ secrets.BUCKET_NAME }}" >> .env
+                echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
+                echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
+                echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> .env
+                echo "KAKAO_RESTAPI_KEY=${{ secrets.KAKAO_RESTAPI_KEY }}" >> .env
+                echo "KAKAO_REDIRECT_URL=${{ secrets.KAKAO_REDIRECT_URL }}" >> .env
+                echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> .env
+                echo "ALGORITHM=${{ secrets.ALGORITHM }}" >> .env
+                echo "ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}" >> .env
+                echo "REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}" >> .env
 
     build:
         name: Build and Push Docker Image
@@ -66,13 +66,23 @@ jobs:
             # Docker 이미지 빌드 및 태깅
             - name: Build Docker image
               run: |
-                docker build -t wellnessapp .
-                docker tag wellnessapp:latest ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}  # GitHub Secrets에서 ECR URI 가져오기
+                # Docker 이미지 빌드
+                docker build -t wellnessapp:${{ github.sha }} .
+
+                # GitHub SHA로 태그
+                docker tag wellnessapp:${{ github.sha }} ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
+
+                # latest로 태그
+                docker tag wellnessapp:${{ github.sha }} ${{ secrets.ECR_REPOSITORY_URI }}:latest
 
             # Docker 이미지 푸시
             - name: Push Docker image to ECR
               run: |
-                docker push ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}  # GitHub Secrets에서 ECR URI 가져오기
+                # GitHub SHA 태그로 푸시
+                docker push ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
+
+                # latest 태그로 푸시
+                docker push ${{ secrets.ECR_REPOSITORY_URI }}:latest
 
     deploy:
         name: Deploy to Production
@@ -83,4 +93,4 @@ jobs:
         steps:
             - name: Deploy to ECS
               run: |
-                aws ecs update-service --cluster my-cluster --service my-service `
+                aws ecs update-service --cluster my-cluster --service my-service --force-new-deployment
