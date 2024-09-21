@@ -43,23 +43,6 @@ jobs:
                 aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
                 aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-             # 환경 변수 설정 (GitHub Secrets에서 불러오기)
-            - name: Create .env file
-              run: |
-                echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > .env
-                echo "TEST_DATABASE_URL=${{ secrets.TEST_DATABASE_URL }}" >> .env
-                echo "BUCKET_NAME=${{ secrets.BUCKET_NAME }}" >> .env
-                echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
-                echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
-                echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> .env
-                echo "KAKAO_RESTAPI_KEY=${{ secrets.KAKAO_RESTAPI_KEY }}" >> .env
-                echo "KAKAO_REDIRECT_URL=${{ secrets.KAKAO_REDIRECT_URL }}" >> .env
-                echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> .env
-                echo "ALGORITHM=${{ secrets.ALGORITHM }}" >> .env
-                echo "ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}" >> .env
-                echo "REFRESH_TOKEN_EXPIRE_DAYS=${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}" >> .env
-
-
             # 퍼블릭 ECR 로그인을 위한 설정
             - name: Log in to Amazon ECR
               uses: aws-actions/amazon-ecr-login@v1
@@ -67,7 +50,6 @@ jobs:
             # Docker 이미지 빌드 및 태깅
             - name: Build Docker image
               run: |
-                # Docker 이미지 빌드
                 docker build -t wellnessapp:${{ github.sha }} .
 
                 # GitHub SHA로 태그
@@ -79,10 +61,7 @@ jobs:
             # Docker 이미지 푸시
             - name: Push Docker image to ECR
               run: |
-                # GitHub SHA 태그로 푸시
                 docker push ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
-
-                # latest 태그로 푸시
                 docker push ${{ secrets.ECR_REPOSITORY_URI }}:latest
 
     deploy:
@@ -92,6 +71,36 @@ jobs:
         if: github.ref == 'refs/heads/prod'
 
         steps:
-            - name: Deploy to ECS
+            - name: Log in to Amazon ECR
+              uses: aws-actions/amazon-ecr-login@v1
+
+            # ECR에서 Docker 이미지 pull
+            - name: Pull Docker image from ECR
               run: |
-                aws ecs update-service --cluster my-cluster --service my-service --force-new-deployment
+                docker pull ${{ secrets.ECR_REPOSITORY_URI }}:latest
+
+            # Docker 컨테이너 실행
+            - name: Run Docker container
+              run: |
+                docker run -d -p 8000:8000 \
+                  --name wellness-container \
+                  -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                  -e TEST_DATABASE_URL="${{ secrets.TEST_DATABASE_URL }}" \
+                  -e BUCKET_NAME="${{ secrets.BUCKET_NAME }}" \
+                  -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+                  -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+                  -e AWS_REGION="${{ secrets.AWS_REGION }}" \
+                  -e MODEL_PATH="${{ secrets.MODEL_PATH }}" \
+                  -e KAKAO_RESTAPI_KEY="${{ secrets.KAKAO_RESTAPI_KEY }}" \
+                  -e KAKAO_REDIRECT_URL="${{ secrets.KAKAO_REDIRECT_URL }}" \
+                  -e SECRET_KEY="${{ secrets.SECRET_KEY }}" \
+                  -e ALGORITHM="${{ secrets.ALGORITHM }}" \
+                  -e ACCESS_TOKEN_EXPIRE_MINUTES="${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}" \
+                  -e REFRESH_TOKEN_EXPIRE_DAYS="${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}" \
+                  ${{ secrets.ECR_REPOSITORY_URI }}:latest
+
+            # 불필요한 Docker 이미지 제거
+            - name: Clean up Docker images
+              run: |
+                docker system prune -f
+                docker rmi ${{ secrets.ECR_REPOSITORY_URI }}:latest
