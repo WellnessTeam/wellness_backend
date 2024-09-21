@@ -67,7 +67,7 @@ jobs:
                 docker push ${{ secrets.ECR_REPOSITORY_URI }}:latest
 
     deploy:
-      name: Deploy to Production
+      name: Deploy to Production on EC2
       runs-on: ubuntu-latest
       if: github.ref == 'refs/heads/prod'
 
@@ -82,33 +82,40 @@ jobs:
           - name: Log in to Amazon ECR
             uses: aws-actions/amazon-ecr-login@v1
 
-          # ECR에서 Docker 이미지 pull
-          - name: Pull Docker image from ECR
-            run: |
-              docker pull ${{ secrets.ECR_REPOSITORY_URI }}:latest
+          # EC2에 SSH로 연결하여 Docker 이미지 배포
+          - name: Deploy on EC2
+            uses: appleboy/ssh-action@v0.1.2
+            with:
+              host: ${{ secrets.EC2_HOST }}
+              username: ${{ secrets.EC2_USER }}
+              key: ${{ secrets.EC2_SSH_KEY }}
+              port: 22
+              script: |
+                # ECR에서 최신 Docker 이미지 pull
+                docker pull ${{ secrets.ECR_REPOSITORY_URI }}:latest
 
-          # Docker 컨테이너 실행
-          - name: Run Docker container
-            run: |
-              docker run -d -p 8000:8000 \
-                --name wellness-container \
-                -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-                -e TEST_DATABASE_URL="${{ secrets.TEST_DATABASE_URL }}" \
-                -e BUCKET_NAME="${{ secrets.BUCKET_NAME }}" \
-                -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
-                -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-                -e AWS_REGION="${{ secrets.AWS_REGION }}" \
-                -e MODEL_PATH="${{ secrets.MODEL_PATH }}" \
-                -e KAKAO_RESTAPI_KEY="${{ secrets.KAKAO_RESTAPI_KEY }}" \
-                -e KAKAO_REDIRECT_URL="${{ secrets.KAKAO_REDIRECT_URL }}" \
-                -e SECRET_KEY="${{ secrets.SECRET_KEY }}" \
-                -e ALGORITHM="${{ secrets.ALGORITHM }}" \
-                -e ACCESS_TOKEN_EXPIRE_MINUTES="${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}" \
-                -e REFRESH_TOKEN_EXPIRE_DAYS="${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}" \
-                ${{ secrets.ECR_REPOSITORY_URI }}:latest
+                # 기존 컨테이너 중지 및 제거
+                docker stop wellness-container || true
+                docker rm wellness-container || true
 
-          # 불필요한 Docker 이미지 제거
-          - name: Clean up Docker images
-            run: |
-              docker system prune -f
-              docker rmi ${{ secrets.ECR_REPOSITORY_URI }}:latest
+                # 새로운 Docker 컨테이너 실행
+                docker run -d -p 8000:8000 \
+                  --name wellness-container \
+                  -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                  -e TEST_DATABASE_URL="${{ secrets.TEST_DATABASE_URL }}" \
+                  -e BUCKET_NAME="${{ secrets.BUCKET_NAME }}" \
+                  -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+                  -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+                  -e AWS_REGION="${{ secrets.AWS_REGION }}" \
+                  -e MODEL_PATH="${{ secrets.MODEL_PATH }}" \
+                  -e KAKAO_RESTAPI_KEY="${{ secrets.KAKAO_RESTAPI_KEY }}" \
+                  -e KAKAO_REDIRECT_URL="${{ secrets.KAKAO_REDIRECT_URL }}" \
+                  -e SECRET_KEY="${{ secrets.SECRET_KEY }}" \
+                  -e ALGORITHM="${{ secrets.ALGORITHM }}" \
+                  -e ACCESS_TOKEN_EXPIRE_MINUTES="${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}" \
+                  -e REFRESH_TOKEN_EXPIRE_DAYS="${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}" \
+                  ${{ secrets.ECR_REPOSITORY_URI }}:latest
+
+                # 불필요한 Docker 이미지 및 리소스 정리
+                docker system prune -f
+
