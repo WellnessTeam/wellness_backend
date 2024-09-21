@@ -15,7 +15,6 @@ RUN poetry config virtualenvs.create false && poetry install --no-interaction --
 
 # Copy the rest of the application code
 COPY app /app
-COPY .env /app
 
 # Run the FastAPI app
 CMD ["uvicorn", "main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
