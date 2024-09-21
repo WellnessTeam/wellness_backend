@@ -34,6 +34,7 @@ jobs:
                 echo "BUCKET_NAME=${{ secrets.BUCKET_NAME }}" >> $GITHUB_ENV
                 echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> $GITHUB_ENV
                 echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
+                echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
                 echo "KAKAO_RESTAPI_KEY=${{ secrets.KAKAO_RESTAPI_KEY }}" >> $GITHUB_ENV
                 echo "KAKAO_REDIRECT_URL=${{ secrets.KAKAO_REDIRECT_URL }}" >> $GITHUB_ENV  # 오타 수정
                 echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
