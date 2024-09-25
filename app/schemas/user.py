@@ -17,7 +17,7 @@ class UserCreate(UserBase):
     nickname: str = Field(max_length=20)
     email: EmailStr
     birthday: date
-    gender: int
+    gender: str
     height: Decimal
     weight: Decimal
     

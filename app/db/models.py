@@ -1,9 +1,10 @@
-from sqlalchemy import ForeignKey, Column, Integer, String, DECIMAL, TIMESTAMP, DATE, text, Boolean, DateTime
+from sqlalchemy import ForeignKey, Column, Integer, String, DECIMAL, TIMESTAMP, DATE, text, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from db.session import Base
 from sqlalchemy.dialects.postgresql import ARRAY
 from datetime import datetime
+import pytz
 
 class Auth(Base):
     __tablename__ = 'auth'
@@ -11,11 +12,11 @@ class Auth(Base):
     id= Column(Integer, primary_key=True,autoincrement=True)
     user_id= Column(Integer, ForeignKey('user_info.id'), nullable=False)
     access_token= Column(String(255), nullable=False, unique=True)
-    access_created_at= Column(DateTime, nullable=False)
-    access_expired_at= Column(DateTime, nullable=False)
+    access_created_at= Column(DateTime(timezone=True), nullable=False)
+    access_expired_at= Column(DateTime(timezone=True), nullable=False)
     refresh_token= Column(String(255), nullable=False, unique=True)
-    refresh_created_at= Column(DateTime, nullable=False)
-    refresh_expired_at= Column(DateTime, nullable=False)
+    refresh_created_at= Column(DateTime(timezone=True), nullable=False)
+    refresh_expired_at= Column(DateTime(timezone=True), nullable=False)
     
     user= relationship("User", back_populates="auth")
 
@@ -112,3 +113,18 @@ class Total_Today(Base):
     history_ids = Column(ARRAY(Integer), nullable=False)
 
     user = relationship("User", back_populates="total_today")
+    
+class Log(Base):
+    __tablename__ = 'logs'
+
+    id = Column(Integer, primary_key=True, index=True)
+    req_url = Column(String, nullable=False)          # 요청 URL
+    method = Column(String, nullable=False)           # HTTP 메서드 (GET, POST 등)
+    req_param = Column(Text, nullable=True)           # 요청 파라미터
+    res_param = Column(Text, nullable=True)           # 응답 파라미터
+    msg = Column(String, nullable=True)               # 추가 메시지 (예: 요청 완료, 오류 메시지)
+    code = Column(Integer, nullable=False)            # 응답 코드 (예: 200, 404, 500 등)
+    time_stamp = Column(DateTime, default=datetime.now(pytz.utc))  # 로그 생성 시간
+
+    def __repr__(self):
+        return f"<Log(id={self.id}, req_url={self.req_url}, method={self.method}, code={self.code})>"
