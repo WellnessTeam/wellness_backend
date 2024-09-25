@@ -1,18 +1,21 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status
 import requests
-from sqlalchemy.orm import Session
-from api.v1.auth import validate_token
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from services.auth_service import validate_token
 from db.session import get_db
-from db.crud import get_food_by_category, get_recommend_by_user
-from utils.image_processing import extract_exif_data, determine_meal_type
+from db.models import Food_List, Recommend 
+from utils.image_processing import extract_exif_data, determine_meal_type, format_date
 from utils.s3 import upload_image_to_s3
-import mimetypes  # mimetypes 모듈 추가
+import mimetypes
 from io import BytesIO
 import os
 import uuid
 import datetime
 from fastapi.responses import JSONResponse
 from decimal import Decimal
+from core.logging import logger
+from utils.format import decimal_to_float
 from db import models
 
 router = APIRouter()
@@ -20,17 +23,12 @@ router = APIRouter()
 # 허용된 이미지 파일 형식 (MIME 타입)
 ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/jpg"]
 
-# Decimal 타입을 float으로 변환하는 함수
-def decimal_to_float(obj):
-    if isinstance(obj, Decimal):
-        return float(obj)
-    raise TypeError
 
 @router.post("/predict")
 async def classify_image(
-    current_user: models.User = Depends(validate_token),  # 토큰 검증 추가
+    current_user: models.User = Depends(validate_token),
     file: UploadFile = File(...), 
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         file_bytes = await file.read()
@@ -38,19 +36,18 @@ async def classify_image(
         unique_file_name = f"{uuid.uuid4()}.{file_extension}"
         bucket_name = os.getenv("BUCKET_NAME", "default_bucket_name")
         
-        # MIME 타입 확인을 위해 파일 확장자를 기반으로 MIME 타입을 추론
+        # MIME 타입 확인
         mime_type, _ = mimetypes.guess_type(file.filename)
-
-        # 허용된 MIME 타입 목록에 없는 경우 에러 반환
         if mime_type not in ALLOWED_MIME_TYPES:
             return JSONResponse(
                 {
-                    "status": "ForBidden",
+                    "status": "Forbidden",
                     "status_code": 403,
                     "detail": "Invalid file type. Allowed types: jpg, jpeg, png."
                 },
                 status_code=status.HTTP_403_FORBIDDEN
             )
+
         # 이미지 S3 업로드 처리
         try:
             image_url = upload_image_to_s3(BytesIO(file_bytes), bucket_name, unique_file_name)
@@ -59,28 +56,30 @@ async def classify_image(
                 {
                     "status": "Bad Request",
                     "status_code": 403,
-                    "detail": f"failed to upload image to s3: {str(e)}"
+                    "detail": f"Failed to upload image to s3: {str(e)}"
                 },
                 status_code=status.HTTP_403_FORBIDDEN
             )
-        
-        # EXIF 데이터에서 날짜 추출
+
+        # EXIF 데이터에서 날짜 추출        
         date = extract_exif_data(file_bytes)
-        if date is None:
-            date = datetime.datetime.now().strftime("%Y:%m:%d %H:%M:%S")  # 현재 시간을 문자열로 설정
-        
+        if date:
+            formatted_date = format_date(date)
+        else:
+            current_time = datetime.datetime.now()
+            formatted_date = current_time.strftime("%Y-%m-%d %H:%M:%S")
+            date = current_time  # datetime 객체를 date로 설정
+
         # meal_type 및 meal_type_id 설정
         meal_type = determine_meal_type(date) if date else "기타"
-        
-        # 식사 종류에 따른 ID를 수동으로 설정 (예시: 아침 -> 1, 점심 -> 2, 저녁 -> 3, 기타 -> 4)
+        logger.info(f"Determined meal_type: {meal_type}, from date: {date}")
         meal_type_id_map = {
             "아침": 0,
             "점심": 1,
             "저녁": 2,
             "기타": 3
         }
-        
-        meal_type_id = meal_type_id_map.get(meal_type, 3)  # 기본값을 기타로 설정
+        meal_type_id = meal_type_id_map.get(meal_type, 3)
 
         # Model API 호출
         model_api_url = "http://127.0.0.1:8001/predict_url/"
@@ -88,6 +87,7 @@ async def classify_image(
             response = requests.post(model_api_url, params={"image_url": image_url})
             response.raise_for_status()
         except requests.RequestException as e:
+            logger.error(f"Model API request failed: {str(e)}")
             return JSONResponse(
                 {
                     "status": "Internal Server Error",
@@ -109,8 +109,9 @@ async def classify_image(
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 음식 카테고리 가져오기
-        food = get_food_by_category(db, category_id)
+        # 음식 카테고리 가져오기 (비동기 쿼리)
+        result = await db.execute(select(Food_List).where(Food_List.category_id == category_id))
+        food = result.scalars().first()
         if not food:
             return JSONResponse(
                 {
@@ -121,8 +122,9 @@ async def classify_image(
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # 사용자 권장 영양소 정보 가져오기
-        recommend = get_recommend_by_user(db, current_user)
+        # 사용자 권장 영양소 정보 가져오기 (비동기 쿼리)
+        result = await db.execute(select(Recommend).where(Recommend.user_id == current_user.id))
+        recommend = result.scalars().first()
         if not recommend:
             return JSONResponse(
                 {
@@ -133,7 +135,7 @@ async def classify_image(
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        # meal_type과 category_name을 UTF-8로 인코딩
+        # UTF-8 인코딩
         meal_type_utf8 = meal_type.encode('utf-8').decode('utf-8')
         category_name_utf8 = food.category_name.encode('utf-8').decode('utf-8')
 
@@ -144,7 +146,7 @@ async def classify_image(
                 "status_code": 201,
                 "detail": {
                     "wellness_image_info": {
-                        "date": date,
+                        "date": formatted_date,
                         "meal_type": meal_type_utf8,
                         "meal_type_id": meal_type_id,
                         "category_id": category_id,
@@ -166,6 +168,7 @@ async def classify_image(
         )
 
     except Exception as e:
+        logger.error(f"Internal server error: {str(e)}")
         return JSONResponse(
             {
                 "status": "Internal Server Error",

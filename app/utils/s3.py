@@ -5,19 +5,13 @@ from fastapi import HTTPException
 from io import BytesIO
 from dotenv import load_dotenv
 import os
-
-# Load environment variables
-load_dotenv()
-
-# Get AWS credentials from environment variables
-aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
-aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+from core.config import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 
 # Initialize S3 client
 s3_client = boto3.client(
     's3',
-    aws_access_key_id=aws_access_key,
-    aws_secret_access_key=aws_secret_key
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
 )
 
 def upload_image_to_s3(image_bytes: BytesIO, bucket_name: str, file_name: str) -> str:

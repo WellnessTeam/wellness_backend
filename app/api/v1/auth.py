@@ -1,67 +1,109 @@
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import OperationalError
+from datetime import datetime, timedelta
+from fastapi.responses import JSONResponse
+from pytz import timezone
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from jose import jwt, ExpiredSignatureError, JWTError
+from fastapi import APIRouter, Depends, Header, HTTPException
+from db.models import Auth, User  
 from db.session import get_db
-from db.models import Auth, User
-from schemas.auth import Token, TokenData
-import logging
+from dotenv import load_dotenv
 import os
-
-# 환경 변수에서 비밀 키와 알고리즘 불러오기
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = 30  # 엑세스 토큰 만료 시간 (분)
-REFRESH_TOKEN_EXPIRE_DAYS = 7  # 리프레시 토큰 만료 시간 (일)
+from services.auth_service import create_access_token
+from schemas.auth import TokenRequest  
+from core.logging import logger
+from core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+import pytz
 
 router = APIRouter()
 
-# 토큰을 Bearer 방식으로 받아오는 OAuth2 스키마
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+# 토큰 검증 및 재발급 API
+@router.post("/verify")
+async def verify_token(token_data: TokenRequest, authorization: str = Header(...), db: AsyncSession = Depends(get_db)):
+    if not authorization.startswith("Bearer "):
+        logger.error("Invalid authorization format")
+        raise HTTPException(status_code=400, detail="Invalid authorization format")
 
-# 로깅 설정
-logger = logging.getLogger(__name__)
+    access_token = authorization.split(" ")[1]
+    refresh_token = token_data.refresh_token
 
+    logger.info(f"Received Access Token for verification: {access_token}")
+    logger.info(f"Received Refresh Token for verification: {refresh_token}")
 
-
-async def validate_token(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
-    # 토큰을 확인하는 로그 추가
-    logger.info(f"Received token: {token}")
-
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid token",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    # 데이터베이스에서 토큰 조회
-    auth_entry = db.query(Auth).filter(Auth.access_token == token).first()
-    
-    if auth_entry is None:
-        # 토큰 조회 실패 시 로그 기록
-        logger.error(f"Token not found in the database: {token}")
-        raise credentials_exception
-
-    # 토큰 만료 여부 확인
-    if auth_entry.access_expired_at < datetime.utcnow():
-        # 만료된 토큰일 경우 로그 기록
-        logger.error(f"Token expired: {token}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # 여기서 User 객체 반환
-    user = db.query(User).filter(User.id == auth_entry.user_id).first()
-    if user is None:
-        logger.error(f"User not found for token: {token}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
+    try:
+        # 엑세스 토큰 검증
+        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_email = payload.get("user_email")  # user_email을 추출
+        logger.info(f"엑세스 토큰 유효, 유저 이메일: {user_email}")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "VALID_ACCESS_TOKEN",
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "detail": "Access token is still valid."
+            }
         )
 
-    logger.info(f"Returning user object: {user} of type {type(user)}")
-    return user
+    except ExpiredSignatureError:
+        logger.warning("엑세스 토큰 만료, 리프레시 토큰 확인 필요.")
+        
+        # 엑세스 토큰이 만료된 경우 리프레시 토큰으로 사용자 정보를 조회 (ORM 방식)
+        stmt = select(Auth, User).join(User, Auth.user_id == User.id).where(Auth.refresh_token == refresh_token)
+        result = await db.execute(stmt)
+        auth_entry = result.first()
+
+        if not auth_entry:
+            logger.warning("Invalid Refresh Token.")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "status": "EXPIRED_REFRESH_TOKEN",
+                    "access_token": None,
+                    "refresh_token": None,
+                    "detail": "Refresh token expired. Please log in again."
+                }
+            )
+
+        # 사용자 정보 추출
+        auth, user = auth_entry  # auth_entry는 Auth와 User 객체를 포함하는 튜플
+        logger.info(f"User ID: {auth.user_id}, Email: {user.email}로 새로운 엑세스 토큰 발급")
+
+        # 새 엑세스 토큰 발급 (user_email 포함)
+        new_access_token = create_access_token(
+            data={"user_email": user.email},
+            expires_delta=ACCESS_TOKEN_EXPIRE_MINUTES
+        )
+
+        # DB에 새로운 엑세스 토큰 정보 업데이트 (ORM 방식)
+        auth.access_token = new_access_token
+        await db.commit()
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "VALID_REFRESH_TOKEN",
+                "access_token": new_access_token,
+                "refresh_token": refresh_token,
+                "detail": "Access token renewed."
+            }
+        )
+
+    except JWTError as jwt_error:
+        logger.error(f"Invalid Token. Error: {jwt_error}")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "INVALID_TOKEN",
+                "access_token": None,
+                "refresh_token": None,
+                "detail": "Invalid token."
+            }
+        )
+        
+        
+        
+        
+        
+        
+        
